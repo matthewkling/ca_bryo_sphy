@@ -56,6 +56,7 @@ results <- foreach(pres = split(occ, occ$name), .combine="c") %dopar% {
                               "nothreshold", "nohinge")))
       if(class(mx)=="try-error") return("failure")
       suit <- predict(mx, clim)
+      suit <- suit / maxValue(suit)
       
       # fit and project distance model
       sigma <- 25 # km

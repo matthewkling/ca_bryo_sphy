@@ -31,7 +31,7 @@ aggProb <- function(x, ...){
 
 
 # function to convert SDM raster to vector of occurrence probabilities per coarse grid cell
-upscale <- function(x, template){
+upscale <- function(x, template, vector = T){
       require(raster)
       r <- readRDS(x)
       d <- as.data.frame(rasterToPoints(r))
@@ -39,7 +39,8 @@ upscale <- function(x, template){
       crs(d) <- crs(r)
       u <- rasterize(d, template, field = "layer", fun = aggProb)
       u[template[] == 0] <- NA # remove pixels outside state
-      values(u)
+      if(vector) return(values(u))
+      return(u)
 }
 
 
