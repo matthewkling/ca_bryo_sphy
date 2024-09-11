@@ -46,7 +46,7 @@ sphylo <- function(tree_file = "data/mosses_rooted.tree",
       threshold <- .25
       xcom_binary <- apply(xcom, 2, function(x) as.integer(x > (threshold * max(x, na.rm = T))))
       sp_binary <- sphy(tree, xcom_binary, template)
-      rnd <- sp_binary %>% sphy_rand()
+      rnd <- sp_binary %>% sphy_rand(null_model = "curveball")
       
       # combine
       stack(div, rnd, reg, con) %>%
@@ -64,6 +64,10 @@ names(moss) %>% saveRDS("results/sphy/sphy_layer_names.rds")
 
 
 ### figures ###
+
+# load results
+moss <- stack("results/sphy/moss_sphy.tif") %>% setNames(readRDS("results/sphy/sphy_layer_names.rds"))
+liverwort <- stack("results/sphy/liverwort_sphy.tif") %>% setNames(readRDS("results/sphy/sphy_layer_names.rds"))
 
 # state bounday data for maps
 select <- dplyr::select
@@ -133,14 +137,15 @@ for(x in names(moss)[1:10]){
 }
 
 # rand
-for(x in names(moss)[grepl("obs_z", names(moss)) & !grepl("alt", names(moss))]){
+for(x in names(moss)[grepl("obs_z|obs_p_upper", names(moss)) & !grepl("alt", names(moss))]){
       pd <- r2df(x) %>%
             mutate(value = ifelse(value == 0, NA, value))
+      midpoint <- ifelse(grepl("obs_z", x), 0, .5)
       p <- ggplot() +
             facet_wrap(~taxon) +
             geom_raster(data = pd, aes(x, y, fill = value)) +
             geom_path(data = cali, aes(x, y, group = group), alpha = .5) +
-            scale_fill_gradient2(mid = "gray90", high = "red", low = "blue", na.value = "white") +
+            scale_fill_gradient2(mid = "gray90", high = "red", low = "blue", na.value = "white", midpoint = midpoint) +
             theme_void() +
             coord_fixed() +
             theme(legend.position = "bottom") +
