@@ -34,10 +34,20 @@ sphylo <- function(tree_file = "data/mosses_rooted.tree",
       xcom <- xcom[, tree$tip.label]
       xcom[is.na(xcom)] <- 0 # NA values not allowed in sphy functions
       
-      # construct spatial phylo object, run analyses
+      # construct spatial phylo object
       sp <- sphy(tree, xcom, template)
+      
+      # alpha diversity measures
       div <- sp %>% sphy_diversity()
-      reg <- sp %>% sphy_regions(k = 5)
+      rnd <- sp %>% sphy_rand(n_rand = 1000, n_strata = 5, transform = sqrt, n_cores = parallel::detectCores() - 2)
+      
+      # regionalizations
+      sp <- sphy_dist(sp, normalize = T, add = T)
+      methods <- c("kmeans", "ward.D", "ward.D2", "single", "complete", "average", "mcquitty", "median", "centroid")
+      reg <- map(methods, function(m) sphy_regions(sp, method = m, normalize = TRUE)) %>%
+            stack() %>% setNames(paste0("region_", methods))
+      
+      # conservation prioritization
       con <- sp %>% sphy_prioritize(protected)
       
       # construct binary version of data set and run canaper randomizations
@@ -46,10 +56,11 @@ sphylo <- function(tree_file = "data/mosses_rooted.tree",
       threshold <- .25
       xcom_binary <- apply(xcom, 2, function(x) as.integer(x > (threshold * max(x, na.rm = T))))
       sp_binary <- sphy(tree, xcom_binary, template)
-      rnd <- sp_binary %>% sphy_rand(null_model = "curveball")
+      cpr <- sp_binary %>% sphy_canape(n_reps = 1000)
+      names(cpr) <- paste0("canape_", names(cpr))
       
       # combine
-      stack(div, rnd, reg, con) %>%
+      stack(div, rnd, reg, con, cpr) %>%
             mask(protectedNA)
 }
 
@@ -105,19 +116,21 @@ p <- ggplot() +
       labs(fill = "priority")
 ggsave("figures/priority.png", p, width = 8, height = 6, units = "in")
 
-# phyloregion
-pd <- r2df("phyloregion") %>%
-      mutate(value = factor(value))
-p <- ggplot() +
-      facet_wrap(~taxon) +
-      geom_raster(data = pd, aes(x, y, fill = value)) +
-      geom_path(data = cali, aes(x, y, group = group), alpha = .5) +
-      scale_fill_brewer(type = "qual") +
-      theme_void() +
-      coord_fixed() +
-      theme(legend.position = "bottom") +
-      labs(fill = "phyloregion")
-ggsave("figures/region.png", p, width = 8, height = 6, units = "in")
+# regions
+for(x in names(moss)[grepl("region", names(moss))]){
+      pd <- r2df(x) %>%
+            mutate(value = factor(value))
+      p <- ggplot() +
+            facet_wrap(~taxon) +
+            geom_raster(data = pd, aes(x, y, fill = value)) +
+            geom_path(data = cali, aes(x, y, group = group), alpha = .5) +
+            scale_fill_brewer(type = "qual") +
+            theme_void() +
+            coord_fixed() +
+            theme(legend.position = "bottom") +
+            labs(fill = "phyloregion")
+      ggsave(paste0("figures/", x, ".png"), p, width = 8, height = 6, units = "in")
+}
 
 # diversity measures
 for(x in names(moss)[1:10]){
@@ -136,16 +149,33 @@ for(x in names(moss)[1:10]){
       ggsave(paste0("figures/", x, ".png"), p, width = 8, height = 6, units = "in")
 }
 
-# rand
-for(x in names(moss)[grepl("obs_z|obs_p_upper", names(moss)) & !grepl("alt", names(moss))]){
-      pd <- r2df(x) %>%
-            mutate(value = ifelse(value == 0, NA, value))
-      midpoint <- ifelse(grepl("obs_z", x), 0, .5)
+# diversity randomization measures
+for(x in names(moss)[11:20]){
+      pd <- r2df(x)
       p <- ggplot() +
             facet_wrap(~taxon) +
             geom_raster(data = pd, aes(x, y, fill = value)) +
             geom_path(data = cali, aes(x, y, group = group), alpha = .5) +
-            scale_fill_gradient2(mid = "gray90", high = "red", low = "blue", na.value = "white", midpoint = midpoint) +
+            scale_fill_viridis_c(na.value = "white", limits = 0:1) +
+            theme_void() +
+            coord_fixed() +
+            theme(legend.position = "bottom") +
+            guides(fill = guide_colorbar(barwidth = 12)) +
+            labs(fill = x)
+      ggsave(paste0("figures/", x, ".png"), p, width = 8, height = 6, units = "in")
+}
+
+# rand
+for(x in names(moss)[grepl("obs_p_upper", names(moss)) & !grepl("alt", names(moss))]){
+      pd <- r2df(x) %>%
+            mutate(value = ifelse(value == 0, NA, value))
+      # midpoint <- ifelse(grepl("obs_z", x), 0, .5)
+      p <- ggplot() +
+            facet_wrap(~taxon) +
+            geom_raster(data = pd, aes(x, y, fill = value)) +
+            geom_path(data = cali, aes(x, y, group = group), alpha = .5) +
+            # scale_fill_gradient2(mid = "gray90", high = "red", low = "blue", na.value = "white", midpoint = midpoint) +
+            scale_fill_viridis_c(na.value = "white", limits = 0:1) +
             theme_void() +
             coord_fixed() +
             theme(legend.position = "bottom") +
@@ -155,7 +185,7 @@ for(x in names(moss)[grepl("obs_z|obs_p_upper", names(moss)) & !grepl("alt", nam
 }
 
 # endem type
-pd <- r2df("endem_type") %>%
+pd <- r2df("canape_endem_type") %>%
       mutate(value = factor(value, levels = 0:4, labels = c("not-significant", "neo", "paleo", "mixed", "super")))
 p <- ggplot() +
       facet_wrap(~taxon) +
@@ -175,37 +205,41 @@ ggsave(paste0("figures/", "canape", ".png"), p, width = 8, height = 6, units = "
 library(terra)
 library(patchwork)
 
-d <- bind_rows(liverwort %>% rast() %>% as.data.frame(xy = T) %>% mutate(tree = "liverwort"),
-                moss %>% rast() %>% as.data.frame(xy = T) %>% mutate(tree = "moss")) %>%
-      group_by(tree) %>% 
-      mutate(PE = PE / mean(PE), CE = CE / mean(CE)) %>%
-      mutate(endem_type = factor(endem_type, levels = 0:4, 
-                                 labels = c("not-significant", "neo", "paleo", "mixed", "super"))) 
+snape_plot <- function(x, name){
+      r <- x %>% rast() %>% as.data.frame(xy = T) %>%
+            select(x, y, PE, CE, qPE, qCE, qRPE) %>%
+            na.omit()
+      
+      sn <- snape(r, transform = function(x) x^10, palette = c("gray80", "blue", "red"))
+      
+      r$color <- sn$snape$color
+      
+      map <- ggplot() +
+            geom_tile(data = r, aes(x, y, fill = color)) +
+            geom_path(data = cali, aes(x, y, group = group), alpha = .5) +
+            scale_fill_identity() +
+            theme_void()
+      
+      legend <- ggplot(sn$legend, aes(qPCE, qRPE, fill = color)) +
+            geom_tile() +
+            scale_fill_identity() +
+            theme_bw() +
+            scale_x_continuous(expand = c(0, 0)) +
+            scale_y_continuous(expand = c(0, 0))
+      
+      scatter <- ggplot(r, aes(PE, CE, color = color)) +
+            geom_point() +
+            scale_color_identity() +
+            theme_bw()
+      
+      p <- map + legend + scatter +
+            plot_layout(design = c("AB
+                             AC"), widths = c(2, 1))
+      ggsave(paste0("figures/snape_", name, ".png"), p, width = 8, height = 6, units = "in")
+}
 
-canape <- ggplot() +
-      facet_grid(method ~ tree, switch = "y") +
-      geom_raster(data = d %>% mutate(method = "CANAPE"), 
-                  aes(x, y, fill = endem_type)) +
-      geom_path(data = cali, aes(x, y, group = group), alpha = .5) +
-      scale_fill_manual(values = c("gray95", "red", "blue", "violet", "darkorchid4"), na.value = "white", drop = F) +
-      theme_void()
-
-snape <- ggplot() +
-      facet_grid(method ~ tree, switch = "y") +
-      geom_raster(data = d %>% mutate(method = "SNAPE"),
-                  aes(x, y, fill = PE / CE, alpha = PE + CE)) +
-      geom_path(data = cali, aes(x, y, group = group), alpha = .5) +
-      scale_fill_gradientn(colors = c("darkred", "red", "violet", "violet", "blue", "darkblue"),
-                           values = c(0, .25, .45, .55, .75, 1),
-                           limits = exp(max(abs(log(d$PE / d$CE)), na.rm = T) * c(-1, 1)),
-                           na.value = "white",
-                           trans = "log10") +
-      scale_alpha(range = 0:1) +
-      theme_void() +
-      theme(strip.text.x = element_blank())
-
-p <- canape / snape
-ggsave(paste0("figures/", "snape", ".png"), p, width = 8, height = 8, units = "in")
+snape_plot(moss, "moss")
+snape_plot(liverwort, "liverwort")
 
 
 
