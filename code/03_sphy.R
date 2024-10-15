@@ -20,11 +20,11 @@ protected[is.na(protected)] <- 1
 
 
 # function to run spatial phylogenetic analyses for a given phylogeny
-sphylo <- function(tree_file = "data/mosses_rooted.tree", 
+sphylo <- function(tree_file = "data/mosses_chrono.tree", 
                    comm_file = "results/comm/site_by_species.rds"){
       
       comm <- readRDS(comm_file)
-      tree <- read.tree(file = tree_file)[[2]]
+      tree <- read.tree(file = tree_file)#[[2]]
       
       # intersect and cleanup
       tree$tip.label <- str_remove_all(tree$tip.label, "-")
@@ -65,22 +65,26 @@ sphylo <- function(tree_file = "data/mosses_rooted.tree",
 }
 
 # run analyses for mosses and liverworts
-moss <- sphylo("data/mosses_rooted.tree")
-liverwort <- sphylo("data/liverworts_rooted.tree")
+moss <- sphylo("data/moss_chrono.tree")
+liverwort <- sphylo("data/liverworts_chrono.tree")
+combined <- sphylo("data/combined_chrono.tree")
 
 # save results
 moss %>% writeRaster("results/sphy/moss_sphy.tif", overwrite = T)
 liverwort %>% writeRaster("results/sphy/liverwort_sphy.tif", overwrite = T)
+combined %>% writeRaster("results/sphy/combined_sphy.tif", overwrite = T)
 names(moss) %>% saveRDS("results/sphy/sphy_layer_names.rds")
 
 
 ### figures ###
 
 # load results
-moss <- stack("results/sphy/moss_sphy.tif") %>% setNames(readRDS("results/sphy/sphy_layer_names.rds"))
-liverwort <- stack("results/sphy/liverwort_sphy.tif") %>% setNames(readRDS("results/sphy/sphy_layer_names.rds"))
+lnm <- readRDS("results/sphy/sphy_layer_names.rds")
+moss <- stack("results/sphy/moss_sphy.tif") %>% setNames(lnm)
+liverwort <- stack("results/sphy/liverwort_sphy.tif") %>% setNames(lnm)
+combined <- stack("results/sphy/combined_sphy.tif") %>% setNames(lnm)
 
-# state bounday data for maps
+# state boundary data for maps
 select <- dplyr::select
 cali <- map_data("state") %>%
       filter(region == "california")
@@ -93,12 +97,13 @@ cali <- coordinates(cali_pts) %>% bind_cols(cali) %>% rename(x = coords.x1, y = 
 # function to reformat data for plotting
 r2df <- function(var){
       stack(moss[[var]],
-            liverwort[[var]]) %>%
-            setNames(c("moss", "liverwort")) %>%
+            liverwort[[var]],
+            combined[[var]]) %>%
+            setNames(c("moss", "liverwort", "combined")) %>%
             rasterToPoints() %>%
             as.data.frame() %>%
             as_tibble() %>%
-            gather(taxon, value, moss, liverwort) %>%
+            gather(taxon, value, moss, liverwort, combined) %>%
             filter(!is.na(value))
 }
 
@@ -114,7 +119,7 @@ p <- ggplot() +
       theme(legend.position = "bottom") +
       guides(fill = guide_colorbar(barwidth = 12)) +
       labs(fill = "priority")
-ggsave("figures/priority.png", p, width = 8, height = 6, units = "in")
+ggsave("figures/priority.png", p, width = 9, height = 5, units = "in")
 
 # regions
 for(x in names(moss)[grepl("region", names(moss))]){
@@ -129,7 +134,7 @@ for(x in names(moss)[grepl("region", names(moss))]){
             coord_fixed() +
             theme(legend.position = "bottom") +
             labs(fill = "phyloregion")
-      ggsave(paste0("figures/", x, ".png"), p, width = 8, height = 6, units = "in")
+      ggsave(paste0("figures/", x, ".png"), p, width = 9, height = 5, units = "in")
 }
 
 # diversity measures
@@ -146,7 +151,7 @@ for(x in names(moss)[1:10]){
             theme(legend.position = "bottom") +
             guides(fill = guide_colorbar(barwidth = 12)) +
             labs(fill = x)
-      ggsave(paste0("figures/", x, ".png"), p, width = 8, height = 6, units = "in")
+      ggsave(paste0("figures/", x, ".png"), p, width = 9, height = 5, units = "in")
 }
 
 # diversity randomization measures
@@ -162,7 +167,7 @@ for(x in names(moss)[11:20]){
             theme(legend.position = "bottom") +
             guides(fill = guide_colorbar(barwidth = 12)) +
             labs(fill = x)
-      ggsave(paste0("figures/", x, ".png"), p, width = 8, height = 6, units = "in")
+      ggsave(paste0("figures/", x, ".png"), p, width = 9, height = 5, units = "in")
 }
 
 # rand
@@ -181,7 +186,7 @@ for(x in names(moss)[grepl("obs_p_upper", names(moss)) & !grepl("alt", names(mos
             theme(legend.position = "bottom") +
             guides(fill = guide_colorbar(barwidth = 12)) +
             labs(fill = x)
-      ggsave(paste0("figures/", x, ".png"), p, width = 8, height = 6, units = "in")
+      ggsave(paste0("figures/", x, ".png"), p, width = 9, height = 5, units = "in")
 }
 
 # endem type
@@ -196,7 +201,7 @@ p <- ggplot() +
       coord_fixed() +
       theme(legend.position = "bottom") +
       labs(fill = "CANAPE classification ")
-ggsave(paste0("figures/", "canape", ".png"), p, width = 8, height = 6, units = "in")
+ggsave(paste0("figures/", "canape", ".png"), p, width = 9, height = 5, units = "in")
 
 
 
@@ -240,6 +245,7 @@ snape_plot <- function(x, name){
 
 snape_plot(moss, "moss")
 snape_plot(liverwort, "liverwort")
+snape_plot(combined, "combined")
 
 
 
