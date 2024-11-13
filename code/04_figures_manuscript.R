@@ -130,8 +130,90 @@ p2 <- ggplot() +
       coord_fixed()
 
 p <- p2 + inset_element(p1, .49, .49, 1, 1)
+# ggsave("figures/manuscript/ordination_rgb.png", 
+#        p, width = 6, height = 6, units = "in")
+
+
+#### dendrogram ==================
+
+# community phylogenetic distance matrix
+tree_file <- "data/moss_chrono.tree"
+comm_file <- "results/comm/site_by_species.rds"
+comm <- readRDS(comm_file)
+tree <- read.tree(file = tree_file)
+tree$tip.label <- str_remove_all(tree$tip.label, "-")
+colnames(comm) <- str_remove_all(colnames(comm), "-")
+xcom <- comm[, colnames(comm) %in% tree$tip.label]
+tree <- drop.tip(tree, setdiff(tree$tip.label, colnames(comm)))
+xcom <- xcom[, tree$tip.label]
+xcom[is.na(xcom)] <- 0 # NA values not allowed in sphy functions
+template <- stack("data/cpad_cced_raster_15km.tif")[[2]]
+sp <- sphy(tree, xcom, template)
+sp <- sphy_dist(sp, normalize = T, add = T)
+
+# dendrogram
+a <- rowSums(sp$occ) > 0
+d <- as.matrix(sp$dist)
+rownames(d) <- colnames(d) <- paste("cell", 1:ncol(d))
+da <- d[a, a]
+da[is.infinite(da)] <- max(da[!is.infinite(da)]) + 1000
+da <- as.dist(da)
+
+pd <- pd %>% 
+      filter(order == 3, inversion == 5) %>%
+      mutate(label = rownames(d)[a])
+
+descendants <- function(tree, node, desc = NULL){
+      if(is.null(desc)) desc <- vector()
+      daughters <- tree %>% activate(edges) %>% filter(from == node) %>% pull(to)
+      desc <- c(desc, daughters)
+      w <- which(! tree %>% activate(nodes) %>% slice(daughters) %>% pull(leaf))
+      if(length(w)>0) for(i in 1:length(w))
+            desc <- descendants(tree, daughters[w[i]], desc)
+      return(desc)
+}
+
+mean_color <- function(x) x %>% col2rgb() %>% apply(1, mean) %>% "/"(255) %>% as.list() %>% do.call(rgb, .)
+
+interpolate_internal_colors <- function(graph){
+      
+      # assign colors to internal nodes
+      graph <- activate(graph, nodes) %>% mutate(id = 1:length(leaf))
+      ids <- graph %>% pull(id)
+      colors <- graph %>% pull(color)
+      for(i in 1:length(ids)){
+            d <- descendants(graph, ids[i])
+            if(length(d) > 0) colors[i] <- graph %>% slice(d) %>% pull(color) %>% mean_color()
+      }
+      graph <- graph %>% mutate(color = colors)
+      
+      # assign colors to edges
+      graph <- graph %>% activate(edges) %>% mutate(color = pull(graph, color)[to],
+                                                    height = pull(graph, height)[to])
+      graph
+}
+
+graph <- da %>%
+      hclust("average") %>%
+      as.dendrogram() %>%
+      reorder(pd$y) %>%
+      as_tbl_graph() %>%
+      activate(nodes) %>%
+      left_join(select(pd, label, color)) %>%
+      interpolate_internal_colors()
+
+p3 <- ggraph(graph, 'dendrogram', height = height ^ .5) + 
+      geom_edge_elbow(aes(edge_color = color, edge_width = height ^ 2)) +
+      scale_edge_color_identity() +
+      scale_edge_width_continuous(range = c(.1, 5)) +
+      coord_flip() +
+      theme_void() +
+      theme(legend.position = "none")
+
+pp <- p + p3 + plot_layout(nrow = 1)
 ggsave("figures/manuscript/ordination_rgb.png", 
-       p, width = 6, height = 6, units = "in")
+       pp, width = 10, height = 6, units = "in")
+
 
 
 # nape ====================================================
@@ -244,15 +326,22 @@ r4 <- r %>% mutate(color = sn$snape$color,
                    data = "occurrences", randomization = "curveball", pvalues = "smooth")
 
 
-r <- bind_rows(r1, r2, r3, r4)
+r <- bind_rows(r1, r3, r4)
 cpr <- bind_rows(cp, r) %>%
-      mutate(randomization = factor(randomization, levels = c("quantize", "curveball")),
+      mutate(randomization = factor(randomization, levels = c("curveball", "quantize")),
              pvalues = factor(pvalues, levels = c("threshold", "smooth")))
+
+labels <- cpr %>% select(randomization, data, pvalues) %>% distinct() %>%
+      arrange(pvalues, desc(data), randomization) %>%
+      mutate(label = paste0("(", letters[1:6], ")"))
 
 map <- ggplot() +
       facet_grid(pvalues ~ data + randomization, labeller = "label_both") +
       geom_tile(data = cpr, aes(x, y, fill = color)) +
       geom_path(data = cali, aes(x, y, group = group), alpha = .5) +
+      geom_text(data = labels, aes(label = label), 
+                x = max(cpr$x), y = max(cpr$y), 
+                size = 5, fontface = "bold", hjust = 1, vjust = 1) +
       scale_fill_identity() +
       theme_bw() +
       theme(axis.text = element_blank(),
@@ -262,73 +351,56 @@ map <- ggplot() +
             strip.background = element_rect(color = "black", fill = "black"),
             strip.text = element_text(color = "white"))
 
-# legend <- ggplot(sn$legend, aes(qPCE, qRPE, fill = color)) +
-#       geom_raster() +
-#       geom_hline(yintercept = c(.975, .025), color = "white") +
-#       geom_vline(xintercept = .95, color = "white") +
-#       geom_hline(yintercept = c(.975, .025), linetype = "dashed") +
-#       geom_vline(xintercept = .95, linetype = "dashed") +
-#       annotate(geom = "text", x = .75, y = c(.15, .5, .85),
-#                label = c("neo-\nendemism", "mixed\nendemism", "paleo-\nendemism"),
-#                lineheight = .8, size = 2.75) +
-#       annotate(geom = "segment", 
-#                x = .85, y = c(.1, .5, .9),
-#                xend = .97, yend = c(.01, .5, .99),
-#                arrow = arrow(angle = 15, type = "closed", length = unit(.1, "inches"))) +
-#       scale_fill_identity() +
-#       theme_bw() +
-#       coord_cartesian(xlim = c(.6, 1), ylim = 0:1) +
-#       scale_x_continuous(expand = c(0, 0)) +
-#       scale_y_continuous(expand = c(0, 0)) +
-#       labs(x = "max null quantile,\nPE | CE",
-#            y = "null quantile, RPE (PE/CE)")
-
-legend <- ggplot(sn$legend %>% filter(qPCE > .6), 
-                 aes(qPCE, qRPE, fill = color)) +
-      geom_raster() +
-      geom_hline(yintercept = c(.975, .025), color = "white", linewidth = .25) +
-      geom_vline(xintercept = .95, color = "white", linewidth = .25) +
-      geom_hline(yintercept = c(.975, .025), linetype = "dashed", linewidth = .25) +
-      geom_vline(xintercept = .95, linetype = "dashed", linewidth = .25) +
-      annotate(geom = "text", 
-               x = c(rep(1.01, 3), .61), 
-               y = c(.025, .5, .975, .5),
-               label = c("neo-\nendemism", "mixed\nendemism", "paleo-\nendemism", "non-\nsignificant"),,
+legend <- ggplot(cpr, aes(pmax(qPE, qCE), qRPE, color = color)) +
+      geom_point(shape = 15) +
+      annotate(geom = "segment",
+               x = c(.95, .95), xend = c(.999, .999),
+               y = c(.975, .025), yend = c(.975, .025),
+               linewidth = .25) +
+      geom_vline(xintercept = .95, linewidth = .25) +
+      annotate(geom = "label", fill = "white",  size = 2.5, fontface = "bold",
+               x = c(rep(.995, 3), .1), 
+               y = c(.005, .5, .995, .5),
+               label = c("neo", "mixed", "paleo", "non-significant"),,
                color = c(pal[c(2, 4, 3)], "gray40"),
-               lineheight = .8, size = 2.75, 
-               hjust = c(0, 0, 0, .5),
-               vjust = c(0, .5, 1, 1),
-               angle = c(0, 0, 0, 90))+
-      scale_fill_identity() +
+               lineheight = .8, size = 2.75) +
+      scale_color_identity() +
+      scale_x_continuous(trans = "logit", breaks = c(.001, .05, .5, .95, .999)) +
+      scale_y_continuous(trans = "logit", breaks = c(.001, .025, .5, .975, .999)) +
       theme_bw() +
-      theme(plot.margin = unit(c(0,3,0,0), "lines"),
+      theme(plot.background = element_blank(),
             text = element_text(size = 8)) +
-      coord_cartesian(xlim = c(.6, 1), ylim = 0:1, clip = "off") +
-      scale_x_continuous(expand = c(0, 0)) +
-      scale_y_continuous(expand = c(0, 0)) +
-      labs(x = "max null quantile,\nPE | CE",
-           y = "null quantile, RPE (PE/CE)")
+      labs(x = "max null quantile, PE | CE",
+           y = "null quantile, RPE (PE/CE)") +
+      coord_fixed()
 
-p <- map + inset_element(legend, .01, .52, .24, .98)
+p <- legend + map + plot_layout(nrow = 1, widths = c(1, 2))
 ggsave("figures/manuscript/nape_method_comp.png", 
-       p, width = 9, height = 5.5, units = "in")
+       p, width = 9, height = 5, units = "in")
 
 
 # combined vs moss vs liverwort empirical results:
 # sdm, quantize, snape
-r <- bind_rows(dm %>% select(x, y, PE, CE, qPE, qCE, qRPE) %>% as.data.frame() %>% mutate(clade = "moss"),
-               dl %>% select(x, y, PE, CE, qPE, qCE, qRPE) %>% as.data.frame() %>% mutate(clade = "liverwort")) %>%
-      na.omit()
+r <- bind_rows(dm %>% select(x, y, PE, CE, qPE, qCE, qRPE) %>% as.data.frame() %>% mutate(clade = "mosses"),
+               dl %>% select(x, y, PE, CE, qPE, qCE, qRPE) %>% as.data.frame() %>% mutate(clade = "liverworts"),
+               dc %>% select(x, y, PE, CE, qPE, qCE, qRPE) %>% as.data.frame() %>% mutate(clade = "mosses + liverworts")) %>%
+      na.omit() %>%
+      mutate(clade = factor(clade, levels = c("mosses", "liverworts", "mosses + liverworts")))
 sn <- snape(r, transform = function(x) x^10, palette = pal[c(1, 3, 4, 4, 2)])
 
 r$color <- sn$snape$color
 r$qPCE <- sn$snape$qPCE
 
+labels <- data.frame(clade = unique(r$clade),
+                     label = paste0("(", letters[1:3], ")"))
 
 p <- ggplot() +
-      facet_wrap(~ clade) +
+      facet_wrap(~ clade, nrow = 2) +
       geom_tile(data = r, aes(x, y, fill = color)) +
       geom_path(data = cali, aes(x, y, group = group), alpha = .5) +
+      geom_text(data = labels, aes(label = label), 
+                x = max(r$x), y = max(r$y), 
+                size = 5, fontface = "bold", hjust = 1, vjust = 1) +
       scale_fill_identity() +
       theme_bw() +
       theme(axis.text = element_blank(),
@@ -357,16 +429,13 @@ l <- ggplot(r, aes(qPCE, qRPE, color = color)) +
       theme_bw() +
       theme(plot.background = element_blank(),
             text = element_text(size = 8)) +
-      labs(x = "max null quantile,\nPE | CE",
-           y = "null quantile, RPE (PE/CE)")
+      labs(x = "max null quantile, PE | CE",
+           y = "null quantile, RPE (PE/CE)") +
+      coord_fixed()
 
-
-pp <- p + 
-      inset_element(l %+% filter(r, clade == "liverwort"), .22, .55, .48, .97) +
-      inset_element(l %+% filter(r, clade == "moss"), .22 + .5, .55, .48 + .5, .97)
-
+pp <- p + inset_element(l, .5, 0, 1, .45)
 ggsave("figures/manuscript/snape_moss_liverwort.png", 
-       pp, width = 8, height = 5, units = "in")
+       pp, width = 5, height = 6, units = "in")
 
 
 
@@ -376,15 +445,27 @@ pd <- dc %>%
       select(x, y, value = priority) %>%
       na.omit()
 
-p <- ggplot() +
+p1 <- ggplot() +
       geom_raster(data = pd, aes(x, y, fill = value)) +
       geom_path(data = cali, aes(x, y, group = group), alpha = .5) +
       scale_fill_viridis_c(option = "D", trans = "log10") +
       coord_fixed() +
-      guides(fill = guide_colorbar(barheight = 12)) +
+      guides(fill = guide_colorbar(barheight = 8, reverse = TRUE)) +
       theme_void() +
       theme(legend.position = c(.6, .79),
             strip.text = element_text(face = "bold", size = 12)) +
       labs(fill = "priority")
+
+p2 <- ggplot() +
+      geom_raster(data = pd, aes(x, y, fill = value <= 50)) +
+      geom_path(data = cali, aes(x, y, group = group), alpha = .5) +
+      scale_fill_manual(values = c("gray80", "darkred")) +
+      coord_fixed() +
+      theme_void() +
+      theme(legend.position = c(.6, .89),
+            strip.text = element_text(face = "bold", size = 12)) +
+      labs(fill = "top-50 priority")
+
+p <- p1 + p2 + plot_layout(nrow = 1)
 ggsave("figures/manuscript/conservation.png", 
-       p, width = 8, height = 8, units = "in")
+       p, width = 10, height = 6, units = "in")
