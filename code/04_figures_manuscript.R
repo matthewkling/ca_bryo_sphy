@@ -60,30 +60,63 @@ cali <- coordinates(cali_pts) %>% bind_cols(cali) %>% rename(x = coords.x1, y = 
 
 # alpha diversity ===========================================
 
+# vanilla diversity and endemism measures
 pd <- dc %>%
       select(x, y,
-             TR, TE, PD, PE, RPD, RPE) %>%
+             TR, TE, PD, PE) %>%
       gather(stat, value, -x, -y) %>%
       na.omit() %>%
-      mutate(stat = factor(stat, levels = c("TR", "PD", "RPD",
-                                            "TE", "PE", "RPE"),
-                           labels = c("terminal\ndiversity", "phylogenetic\ndiversity", "relative\nphylogenetic diversity",
-                                      "terminal\nendemism", "phylogenetic\nendemism", "relative\nphylogenetic endemism"))) %>%
+      mutate(stat = factor(stat, levels = c("TR", "PD", "TE", "PE"),
+                           labels = c("terminal\ndiversity", "phylogenetic\ndiversity",
+                                      "terminal\nendemism", "phylogenetic\nendemism"))) %>%
       group_by(stat) %>%
       mutate(value = value / max(value))
-
-p <- pd %>%
+p1 <- pd %>%
       ggplot(aes(x, y, fill = value)) +
-      facet_wrap(~stat) +
+      facet_wrap(~stat, nrow = 2) +
       geom_raster() +
+      scale_x_continuous(expand = c(0,0)) +
       scale_fill_viridis_c(option = "B") +
-      guides(fill = guide_colorbar(barwidth = 12)) +
+      guides(fill = guide_colorbar(barwidth = 8)) +
       theme_void() +
       theme(legend.position = "bottom",
             strip.text = element_text(face = "bold", size = 12)) +
-      labs(fill = "value as fraction of maximum  ")
+      labs(fill = "value as fraction \nof maximum  ")
+
+
+# randomization results for PD and RPD
+pd <- dc %>%
+      select(x, y, qPD, qRPD) %>%
+      na.omit() %>%
+      gather(stat, value, -x, -y) %>%
+      na.omit() %>%
+      mutate(stat = factor(stat, levels = c("qPD", "qRPD"),
+                           labels = c("phylogenetic\ndiversity",
+                                      "relative\nphylogenetic diversity")))
+p2 <- pd %>%
+      mutate(value = pmax(.001, pmin(.999, value))) %>%
+      ggplot(aes(x, y, fill = value)) +
+      facet_wrap(~stat, nrow = 2) +
+      geom_raster() +
+      scale_x_continuous(expand = c(0,0)) +
+      # scale_fill_viridis_c(option = "B") +
+      scale_fill_gradientn(colors = c("darkorchid4", "darkmagenta", "gray", "gray", "forestgreen", "darkgreen"),
+                           # values = c(0, .01, .3, .7, .99, 1),
+                           breaks = c(.01, .1, .5, .9, .99),
+                           labels = c(".01", ".1", ".5", ".9", ".99"),
+                           trans = "logit") +
+      guides(fill = guide_colorbar(barwidth = 6)) +
+      theme_void() +
+      theme(legend.position = "bottom",
+            strip.text = element_text(face = "bold", size = 12)) +
+      labs(fill = "quantile in null \ndistribution")
+
+p <- p1 + p2 + plot_layout(nrow = 1, widths = c(2, 1))
 ggsave("figures/manuscript/alpha.png", 
        p, width = 8, height = 8, units = "in")
+
+
+
 
 
 # beta diversity ============================================
