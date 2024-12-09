@@ -2,7 +2,7 @@
 
 # libraries
 library(tidyverse)
-library(spatialphy) # devtools::install_github("matthewkling/spatialphy")
+library(phylospatial)
 library(raster)
 library(ape)
 

@@ -1,11 +1,14 @@
 
 # libraries
 library(tidyverse)
-library(spatialphy) # devtools::install_github("matthewkling/spatialphy")
+library(phylospatial)
 library(raster)
+library(terra)
 library(ape)
 library(ggtree)
 library(patchwork)
+library(tidygraph)
+library(ggraph)
 
 
 
@@ -43,7 +46,7 @@ ggsave("figures/manuscript/data.png", p, width = 15, height = 8, units = "in")
 
 # data =======================================================
 
-lnm <- readRDS("results/sphy/sphy_layer_names.rds")
+lnm <- readRDS("results/sphy/ps_layer_names.rds")
 r2df <- function(r) r %>% stack() %>% setNames(lnm) %>% rasterToPoints() %>% as.data.frame() %>% as_tibble()
 dco <- r2df("results/sphy/combined_sphy_occ.tif")
 dc <- r2df("results/sphy/combined_sphy.tif")
@@ -60,48 +63,85 @@ cali <- coordinates(cali_pts) %>% bind_cols(cali) %>% rename(x = coords.x1, y = 
 
 # alpha diversity ===========================================
 
-# vanilla diversity and endemism measures
-pd <- dc %>%
-      select(x, y,
-             TR, TE, PD, PE) %>%
-      gather(stat, value, -x, -y) %>%
-      na.omit() %>%
-      mutate(stat = factor(stat, levels = c("TR", "PD", "TE", "PE"),
-                           labels = c("terminal\ndiversity", "phylogenetic\ndiversity",
-                                      "terminal\nendemism", "phylogenetic\nendemism"))) %>%
-      group_by(stat) %>%
-      mutate(value = value / max(value))
-p1 <- pd %>%
-      ggplot(aes(x, y, fill = value)) +
-      facet_wrap(~stat, nrow = 2) +
-      geom_raster() +
-      scale_x_continuous(expand = c(0,0)) +
-      scale_fill_viridis_c(option = "B") +
-      guides(fill = guide_colorbar(barwidth = 8)) +
-      theme_void() +
-      theme(legend.position = "bottom",
-            strip.text = element_text(face = "bold", size = 12)) +
-      labs(fill = "value as fraction \nof maximum  ")
+for(clade in c("moss", "liverwort", "combined")){
+      
+      dx <- switch(clade, moss = dm, liverwort = dl, combined = dc)
+      
+      # vanilla diversity and endemism measures
+      pd <- dx %>%
+            select(x, y,
+                   TR, PD) %>%
+            gather(stat, value, -x, -y) %>%
+            na.omit() %>%
+            mutate(stat = factor(stat, levels = c("TR", "PD")[2:1],
+                                 labels = c("terminal\ndiversity", "phylogenetic\ndiversity")[2:1])) %>%
+            group_by(stat) %>%
+            mutate(value = value / max(value))
+      p1 <- pd %>%
+            ggplot(aes(x, y, fill = value)) +
+            facet_wrap(~stat, nrow = 1) +
+            geom_raster() +
+            scale_x_continuous(expand = c(0,0)) +
+            scale_fill_viridis_c(option = "B") +
+            guides(fill = guide_colorbar(barheight = 8)) +
+            theme_void() +
+            theme(legend.position = "right",
+                  strip.text = element_text(face = "bold", size = 12)) +
+            labs(fill = "value as fraction \nof maximum  ")
+      
+      
+      # randomization results for PD and RPD
+      pd <- dx %>%
+            select(x, y, qPD, qRPD) %>%
+            na.omit() %>%
+            gather(stat, value, -x, -y) %>%
+            na.omit() %>%
+            mutate(stat = factor(stat, levels = c("qPD", "qRPD"),
+                                 labels = c("phylogenetic\ndiversity",
+                                            "relative\nphylogenetic diversity")))
+      p2 <- pd %>%
+            mutate(value = pmax(.001, pmin(.999, value))) %>%
+            ggplot(aes(x, y, fill = value)) +
+            facet_wrap(~stat, nrow = 1) +
+            geom_raster() +
+            scale_x_continuous(expand = c(0,0)) +
+            # scale_fill_viridis_c(option = "B") +
+            scale_fill_gradientn(colors = c("darkorchid4", "darkmagenta", "gray", "gray", "forestgreen", "darkgreen"),
+                                 # values = c(0, .01, .3, .7, .99, 1),
+                                 breaks = c(.01, .1, .5, .9, .99),
+                                 labels = c(".01", ".1", ".5", ".9", ".99"),
+                                 trans = "logit") +
+            guides(fill = guide_colorbar(barheight = 8)) +
+            theme_void() +
+            theme(legend.position = "right",
+                  strip.text = element_text(face = "bold", size = 12)) +
+            labs(fill = "quantile in null \ndistribution")
+      
+      p <- p1 + p2 + plot_layout(nrow = 2)
+      ggsave(paste0("figures/manuscript/alpha_", clade, ".png"), 
+             p, width = 7, height = 8, units = "in")
+}
 
 
-# randomization results for PD and RPD
+
+
+
+# canaper, for comparison
 pd <- dc %>%
-      select(x, y, qPD, qRPD) %>%
+      select(x, y, canape_pd_obs_p_upper, canape_rpd_obs_p_upper) %>%
       na.omit() %>%
       gather(stat, value, -x, -y) %>%
       na.omit() %>%
-      mutate(stat = factor(stat, levels = c("qPD", "qRPD"),
+      mutate(stat = factor(stat, levels = c("canape_pd_obs_p_upper", "canape_rpd_obs_p_upper"),
                            labels = c("phylogenetic\ndiversity",
                                       "relative\nphylogenetic diversity")))
-p2 <- pd %>%
+pd %>%
       mutate(value = pmax(.001, pmin(.999, value))) %>%
       ggplot(aes(x, y, fill = value)) +
-      facet_wrap(~stat, nrow = 2) +
+      facet_wrap(~stat, nrow = 1) +
       geom_raster() +
       scale_x_continuous(expand = c(0,0)) +
-      # scale_fill_viridis_c(option = "B") +
       scale_fill_gradientn(colors = c("darkorchid4", "darkmagenta", "gray", "gray", "forestgreen", "darkgreen"),
-                           # values = c(0, .01, .3, .7, .99, 1),
                            breaks = c(.01, .1, .5, .9, .99),
                            labels = c(".01", ".1", ".5", ".9", ".99"),
                            trans = "logit") +
@@ -110,11 +150,6 @@ p2 <- pd %>%
       theme(legend.position = "bottom",
             strip.text = element_text(face = "bold", size = 12)) +
       labs(fill = "quantile in null \ndistribution")
-
-p <- p1 + p2 + plot_layout(nrow = 1, widths = c(2, 1))
-ggsave("figures/manuscript/alpha.png", 
-       p, width = 8, height = 8, units = "in")
-
 
 
 
@@ -146,7 +181,7 @@ ggsave("figures/manuscript/ordination_rgb_menu.png",
        p, width = 9, height = 8, units = "in")
 
 p1 <- ggplot() +
-      geom_point(data = pd %>% filter(order == 3, inversion == 5),
+      geom_point(data = pd %>% filter(order == 1, inversion == 3),
                  aes(rgb1, rgb2, color = color), size = .5) +
       scale_color_identity() +
       theme_bw() +
@@ -155,7 +190,7 @@ p1 <- ggplot() +
       labs(x = "NMDS 1\n(z-axis = NMDS 3)", y = "NMDS 2")
 
 p2 <- ggplot() +
-      geom_raster(data = pd %>% filter(order == 3, inversion == 5),
+      geom_raster(data = pd %>% filter(order == 1, inversion == 3),
                   aes(x, y, fill = color)) +
       geom_path(data = cali, aes(x, y, group = group), alpha = .5) +
       scale_fill_identity() +
@@ -180,20 +215,20 @@ xcom <- comm[, colnames(comm) %in% tree$tip.label]
 tree <- drop.tip(tree, setdiff(tree$tip.label, colnames(comm)))
 xcom <- xcom[, tree$tip.label]
 xcom[is.na(xcom)] <- 0 # NA values not allowed in sphy functions
-template <- stack("data/cpad_cced_raster_15km.tif")[[2]]
-sp <- sphy(tree, xcom, template)
-sp <- sphy_dist(sp, normalize = T, add = T)
+template <- rast("data/cpad_cced_raster_15km.tif")[[2]]
+sp <- phylospatial(tree, xcom, template)
+sp <- ps_add_dissim(sp, method = "sorensen", normalize = T)
 
 # dendrogram
-a <- rowSums(sp$occ) > 0
-d <- as.matrix(sp$dist)
+a <- rowSums(sp$comm) > 0
+d <- as.matrix(sp$dissim)
 rownames(d) <- colnames(d) <- paste("cell", 1:ncol(d))
 da <- d[a, a]
 da[is.infinite(da)] <- max(da[!is.infinite(da)]) + 1000
 da <- as.dist(da)
 
 pd <- pd %>% 
-      filter(order == 3, inversion == 5) %>%
+      filter(order == 1, inversion == 3) %>%
       mutate(label = rownames(d)[a])
 
 descendants <- function(tree, node, desc = NULL){
@@ -264,7 +299,10 @@ snape <- function(rand,
       
       snape_colors <- function(peq, rpeq){
             colors <- colorRampPalette(palette[length(palette):2])(101)
-            colors <- colors[round(rpeq * 100)+1]
+            logit <- function(p) log(p / (1-p))
+            lrpeq <- (logit(pmax(.001, pmin(.999, rpeq))) - logit(.001)) / (logit(.999)*2)
+            colors <- colors[round(lrpeq * 100) + 1]
+            
             colors <- cbind(t(col2rgb(colors)), peq)
             colors <- apply(colors, 1, function(x) x[1:3] + (col2rgb(palette[1]) - x[1:3]) * (1 - transform(x[4])))
             colors <- rgb(colors[1,], colors[2,], colors[3,], maxColorValue = 255)
@@ -286,7 +324,11 @@ snape <- function(rand,
 }
 
 # non-sig, neo, paleo, mixed/super
-pal <- c("gray80", "red", "dodgerblue", "purple")
+pal <- c("gray80", "red", "purple", "dodgerblue")
+cpal <- c("gray80", "cyan", "blue", "purple", "red", "orange")
+
+# pal <- c("gray80", viridis::viridis_pal()(3))
+# cpal <- c("gray80", viridis::viridis_pal()(5))
 
 # endem type
 c1 <- bind_rows(dc %>% 
@@ -313,14 +355,14 @@ c2 <- dc %>%
 cp <- bind_rows(c1, c2) %>%
       na.omit() %>%
       mutate(value = ifelse(value == 4, 3, value),
-             color = pal[value + 1],
+             color = pal[c(1, 2, 4, 3)][value + 1],
              value = factor(value, levels = 0:3, labels = c("not-significant", "neo", "paleo", "mixed")))
 
 # sdm, quantize, snape
 r <- dc %>%
       select(x, y, PE, CE, qPE, qCE, qRPE) %>% as.data.frame() %>%
       na.omit()
-sn <- snape(r, transform = function(x) x^10, palette = pal[c(1, 3, 4, 4, 2)])
+sn <- snape(r, transform = function(x) x^10, palette = cpal)
 r1 <- r %>% mutate(color = sn$snape$color,
                    data = "SDMs", randomization = "quantize", pvalues = "smooth")
 
@@ -328,7 +370,7 @@ r1 <- r %>% mutate(color = sn$snape$color,
 r <- dco %>%
       select(x, y, PE, CE, qPE, qCE, qRPE) %>% as.data.frame() %>%
       na.omit()
-sn <- snape(r, transform = function(x) x^10, palette = pal[c(1, 3, 4, 4, 2)])
+sn <- snape(r, transform = function(x) x^10, palette = cpal)
 r2 <- r %>% mutate(color = sn$snape$color,
                    data = "occurrences", randomization = "quantize", pvalues = "smooth")
 
@@ -341,7 +383,7 @@ r <- dc %>%
              qCE = canape_pe_alt_obs_p_upper, 
              qRPE = canape_rpe_obs_p_upper) %>% 
       as.data.frame() %>% na.omit()
-sn <- snape(r, transform = function(x) x^10, palette = pal[c(1, 3, 4, 4, 2)])
+sn <- snape(r, transform = function(x) x^10, palette = cpal)
 r3 <- r %>% mutate(color = sn$snape$color,
                    data = "SDMs", randomization = "curveball", pvalues = "smooth")
 
@@ -354,19 +396,23 @@ r <- dco %>%
              qCE = canape_pe_alt_obs_p_upper, 
              qRPE = canape_rpe_obs_p_upper) %>% 
       as.data.frame() %>% na.omit()
-sn <- snape(r, transform = function(x) x^10, palette = pal[c(1, 3, 4, 4, 2)])
+sn <- snape(r, transform = function(x) x^10, palette = cpal)
 r4 <- r %>% mutate(color = sn$snape$color,
                    data = "occurrences", randomization = "curveball", pvalues = "smooth")
 
 
 r <- bind_rows(r1, r3, r4)
 cpr <- bind_rows(cp, r) %>%
-      mutate(randomization = factor(randomization, levels = c("curveball", "quantize")),
-             pvalues = factor(pvalues, levels = c("threshold", "smooth")))
+      filter(data == "SDMs") %>%
+      mutate(data = ifelse(randomization == "curveball", "thresholded SDMs", "continuous SDMs"),
+             randomization = factor(randomization, levels = c("curveball", "quantize")),
+             pvalues = factor(pvalues, levels = c("threshold", "smooth"),
+                              labels = c("thresholded", "continuous")),
+             data = factor(data, levels = c("thresholded SDMs", "continuous SDMs")))
 
 labels <- cpr %>% select(randomization, data, pvalues) %>% distinct() %>%
-      arrange(pvalues, desc(data), randomization) %>%
-      mutate(label = paste0("(", letters[1:6], ")"))
+      arrange(pvalues, data, randomization) %>%
+      mutate(label = paste0("(", letters[1:4], ")"))
 
 map <- ggplot() +
       facet_grid(pvalues ~ data + randomization, labeller = "label_both") +
@@ -395,13 +441,15 @@ legend <- ggplot(cpr, aes(pmax(qPE, qCE), qRPE, color = color)) +
                x = c(rep(.995, 3), .1), 
                y = c(.005, .5, .995, .5),
                label = c("neo", "mixed", "paleo", "non-significant"),,
-               color = c(pal[c(2, 4, 3)], "gray40"),
-               lineheight = .8, size = 2.75) +
+               color = c(pal[c(2, 3, 4)], "gray40"),
+               lineheight = .8) +
       scale_color_identity() +
-      scale_x_continuous(trans = "logit", breaks = c(.001, .05, .5, .95, .999)) +
-      scale_y_continuous(trans = "logit", breaks = c(.001, .025, .5, .975, .999)) +
+      scale_x_continuous(trans = "logit", breaks = c(.001, .05, .5, .9, .95, .999)) +
+      scale_y_continuous(trans = "logit", breaks = c(.001, .025, .1, .9, .975, .999)) +
       theme_bw() +
       theme(plot.background = element_blank(),
+            panel.grid.minor = element_blank(),
+            axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5),
             text = element_text(size = 8)) +
       labs(x = "max null quantile, PE | CE",
            y = "null quantile, RPE (PE/CE)") +
@@ -409,7 +457,7 @@ legend <- ggplot(cpr, aes(pmax(qPE, qCE), qRPE, color = color)) +
 
 p <- legend + map + plot_layout(nrow = 1, widths = c(1, 2))
 ggsave("figures/manuscript/nape_method_comp.png", 
-       p, width = 9, height = 5, units = "in")
+       p, width = 7, height = 5.5, units = "in")
 
 
 # combined vs moss vs liverwort empirical results:
@@ -419,13 +467,18 @@ r <- bind_rows(dm %>% select(x, y, PE, CE, qPE, qCE, qRPE) %>% as.data.frame() %
                dc %>% select(x, y, PE, CE, qPE, qCE, qRPE) %>% as.data.frame() %>% mutate(clade = "mosses + liverworts")) %>%
       na.omit() %>%
       mutate(clade = factor(clade, levels = c("mosses", "liverworts", "mosses + liverworts")))
-sn <- snape(r, transform = function(x) x^10, palette = pal[c(1, 3, 4, 4, 2)])
+sn <- snape(r, transform = function(x) x^10, palette = cpal)
 
 r$color <- sn$snape$color
 r$qPCE <- sn$snape$qPCE
 
 labels <- data.frame(clade = unique(r$clade),
                      label = paste0("(", letters[1:3], ")"))
+
+numerals <- tibble(clade = unique(r$clade)[3],
+                   label = c("i", "ii  ", "iii", "iv", "v", "vi"),
+                   x = min(r$x) + c(.53, .00, .12, .33, .65, .9) * diff(range(r$x)),
+                   y = min(r$y) + c(.65, .93, .53, .18, .05, .36) * diff(range(r$y)))
 
 p <- ggplot() +
       facet_wrap(~ clade, nrow = 2) +
@@ -434,6 +487,8 @@ p <- ggplot() +
       geom_text(data = labels, aes(label = label), 
                 x = max(r$x), y = max(r$y), 
                 size = 5, fontface = "bold", hjust = 1, vjust = 1) +
+      geom_text(data = numerals, aes(label = label, x = x, y = y), 
+                size = 3, fontface = "italic") +
       scale_fill_identity() +
       theme_bw() +
       theme(axis.text = element_blank(),
@@ -454,13 +509,16 @@ l <- ggplot(r, aes(qPCE, qRPE, color = color)) +
                x = c(rep(.995, 3), .1), 
                y = c(.005, .5, .995, .5),
                label = c("neo", "mixed", "paleo", "non-significant"),,
-               color = c(pal[c(2, 4, 3)], "gray40"),
+               color = c(pal[c(2, 3, 4)], "gray40"),
                lineheight = .8, size = 2.75) +
       scale_color_identity() +
-      scale_x_continuous(trans = "logit", breaks = c(.001, .05, .5, .95, .999)) +
-      scale_y_continuous(trans = "logit", breaks = c(.001, .025, .5, .975, .999)) +
+      # scale_x_continuous(trans = "logit", breaks = c(.001, .05, .5, .95, .999)) +
+      # scale_y_continuous(trans = "logit", breaks = c(.001, .025, .5, .975, .999)) +
+      scale_x_continuous(trans = "logit", breaks = c(.001, .05, .5, .9, .95, .999)) +
+      scale_y_continuous(trans = "logit", breaks = c(.001, .025, .1, .9, .975, .999)) +
       theme_bw() +
       theme(plot.background = element_blank(),
+            axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5),
             text = element_text(size = 8)) +
       labs(x = "max null quantile, PE | CE",
            y = "null quantile, RPE (PE/CE)") +
@@ -478,27 +536,63 @@ pd <- dc %>%
       select(x, y, value = priority) %>%
       na.omit()
 
-p1 <- ggplot() +
-      geom_raster(data = pd, aes(x, y, fill = value)) +
-      geom_path(data = cali, aes(x, y, group = group), alpha = .5) +
-      scale_fill_viridis_c(option = "D", trans = "log10") +
-      coord_fixed() +
-      guides(fill = guide_colorbar(barheight = 8, reverse = TRUE)) +
-      theme_void() +
-      theme(legend.position = c(.6, .79),
-            strip.text = element_text(face = "bold", size = 12)) +
-      labs(fill = "priority")
-
 p2 <- ggplot() +
       geom_raster(data = pd, aes(x, y, fill = value <= 50)) +
-      geom_path(data = cali, aes(x, y, group = group), alpha = .5) +
-      scale_fill_manual(values = c("gray80", "darkred")) +
+      # geom_path(data = cali, aes(x, y, group = group), alpha = .5) +
+      scale_fill_manual(values = c("gray80", "darkred"),
+                        labels = c("lower priority", "highest priority")) +
       coord_fixed() +
       theme_void() +
-      theme(legend.position = c(.6, .89),
-            strip.text = element_text(face = "bold", size = 12)) +
-      labs(fill = "top-50 priority")
+      theme(legend.position = "inside",
+            legend.position.inside = c(.5, .95),
+            legend.justification = c(0, 1)) +
+      labs(fill = "optimal\ntop-50 set")
 
-p <- p1 + p2 + plot_layout(nrow = 1)
-ggsave("figures/manuscript/conservation.png", 
+p3 <- ggplot() +
+      geom_raster(data = con, aes(x, y, fill = top50)) +
+      scale_fill_viridis_c(direction = -1, labels = scales::label_percent()) +
+      coord_fixed() +
+      guides(fill = guide_colorbar(barheight = 5, reverse = FALSE)) +
+      theme_void() +
+      theme(legend.position = "inside",
+            legend.position.inside = c(.5, .95),
+            legend.justification = c(0, 1)) +
+      labs(fill = "proportion of\ntop-50 sets\nthat include cell")
+
+x <- min(con$x) + diff(range(con$x)) * .85
+y <- min(con$y) + diff(range(con$y)) * .99
+p <- (p2 + annotate(geom = "text", x = x, y = y, label = "(a)", fontface = "bold", size = 7)) +
+      (p3 + annotate(geom = "text", x = x, y = y, label = "(b)", fontface = "bold", size = 7)) + 
+      plot_layout(nrow = 1)
+ggsave("figures/manuscript/conservation_prob.png", 
+       p, width = 10, height = 6, units = "in")
+
+
+
+# intactness and current protection maps =====================================
+
+protected <- rast("data/cpad_cced_raster_15km.tif")[[1]]
+intact <- rast("data/intactness_810m.tif") %>%
+      project(protected, "average") %>%
+      mask(protected)
+
+p <- c(protected, intact) %>%
+      setNames(c("protection", "intactness")) %>%
+      as.data.frame(xy = TRUE) %>%
+      gather(metric, value, -x, -y) %>%
+      mutate(metric = factor(metric,
+                             levels = c("intactness", "protection"),
+                             labels = c("landscape intactness\n",
+                                        "protection level (circa 2017)\n"))) %>%
+      ggplot(aes(x, y, fill = value)) + 
+      facet_wrap(~metric, nrow = 1) +
+      geom_raster() +
+      scale_fill_viridis_c(labels = scales::label_percent()) +
+      guides(fill = guide_colorbar(barwidth = 20, barheight = .5)) +
+      coord_fixed() +
+      theme_void() +
+      theme(legend.position = "bottom",
+            strip.text = element_text(face = "bold", size = 12)) +
+      labs(fill = NULL)
+ggsave("figures/manuscript/intactness_protection.png", 
        p, width = 10, height = 6, units = "in")

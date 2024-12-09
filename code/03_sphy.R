@@ -1,7 +1,8 @@
 
 # libraries
 library(tidyverse)
-library(spatialphy) # devtools::install_github("matthewkling/spatialphy")
+library(phylospatial) # devtools::install_github("matthewkling/phylospatial")
+library(terra)
 library(raster)
 library(ape)
 
@@ -9,15 +10,13 @@ library(ape)
 # protected areas =====================================
 
 # load and transform existing protected area data
-reserves <- raster("data/protection_status.tif")
-protected <- reserves %>%
-      rasterToPoints() %>%
-      as.data.frame()
+reserves <- rast("data/protection_status.tif")
+protected <- reserves %>% as.data.frame(xy = TRUE)
 coordinates(protected) <- c("x", "y")
 crs(protected) <- crs(reserves)
-template <- stack("data/cpad_cced_raster_15km.tif")[[2]]
+template <- rast("data/cpad_cced_raster_15km.tif")[[2]]
 protected <- spTransform(protected, crs(template))
-protected <- rasterize(protected, template, field = "protection_status", fun = mean)
+protected <- rasterize(vect(protected), template, field = "protection_status", fun = mean)
 protectedNA <- protected
 protected[is.na(protected)] <- 1
 
@@ -43,44 +42,72 @@ sphylo <- function(tree_file = "data/moss_chrono.tree",
       binary <- all(xcom %in% 0:1)
       
       # construct spatial phylo object
-      sp <- sphy(tree, xcom, template)
+      ps <- phylospatial(tree, xcom, template)
       
       # alpha diversity measures
-      div <- sp %>% sphy_diversity()
+      div <- ps_diversity(ps)
       
-      # regionalizations
-      sp <- sphy_dist(sp, normalize = T, add = T)
+      # beta diversity
+      ps <- ps_add_dissim(ps, "sorensen", normalize = TRUE)
+      rgb <- ps_rgb(ps, "nmds", rank) %>% setNames(paste0("rgb", 1:3))
       methods <- c("kmeans", "ward.D", "ward.D2", "single", "complete", "average", "mcquitty", "median", "centroid")
-      reg <- purrr::map(methods, function(m) sphy_regions(sp, method = m, normalize = TRUE)) %>%
-            stack() %>% setNames(paste0("region_", methods))
-      rgb <- sphy_rgb(sp, "nmds", rank) %>% setNames(paste0("rgb", 1:3))
+      reg <- purrr::map(methods, function(m) ps_regions(ps, method = m, normalize = TRUE)) %>%
+            rast() %>% setNames(paste0("region_", methods))
       
       # conservation prioritization
-      con <- sp %>% sphy_prioritize(protected)
+      con <- ps_prioritize(ps, protected)
       
       # neo and paleo edemism
       n_rand <- 1000
       n_iter <- 100000
-      rnd <- sp %>% sphy_rand(n_rand = n_rand, n_iter = n_iter, n_strata = ifelse(binary, 2, 5), 
-                              transform = sqrt, n_cores = parallel::detectCores() - 2)
+      rnd <- ps_rand(ps, n_rand = n_rand, n_iter = n_iter, n_strata = ifelse(binary, 2, 5), 
+                     transform = sqrt, n_cores = parallel::detectCores() - 2)
       
       # construct binary version of data set and run canaper randomizations
       # (note that a reasonable alternative stage to threshold would be after aggregating clade ranges;
       # but doing it before matches the output of canaper functions which has some appeal)
       if(binary){
-            sp_binary <- sp
+            ps_binary <- ps
       }else{
             threshold <- .25
             xcom_binary <- apply(xcom, 2, function(x) as.integer(x > (threshold * max(x, na.rm = T))))
-            sp_binary <- sphy(tree, xcom_binary, template)
+            ps_binary <- phylospatial(tree, xcom_binary, template)
       }
-      cpr <- sp_binary %>% sphy_canape(n_reps = n_rand, n_iterations = n_iter)
+      cpr <- ps_binary %>% ps_canape(n_reps = n_rand, n_iterations = n_iter)
       names(cpr) <- paste0("canape_", names(cpr))
       
       # combine
-      stack(div, rnd, reg, rgb, con, cpr) %>%
+      c(div, rnd, reg, rgb, con, cpr) %>%
             mask(protectedNA)
 }
+
+# run conservation prioritization only, using probabilistic method
+con <- function(tree_file = "data/moss_chrono.tree", 
+                comm_file = "results/comm/site_by_species.rds"){
+      
+      comm <- readRDS(comm_file)
+      tree <- read.tree(file = tree_file)#[[2]]
+      
+      # intersect and clean up
+      tree$tip.label <- str_remove_all(tree$tip.label, "-")
+      colnames(comm) <- str_remove_all(colnames(comm), "-")
+      xcom <- comm[, colnames(comm) %in% tree$tip.label]
+      tree <- drop.tip(tree, setdiff(tree$tip.label, colnames(comm)))
+      xcom <- xcom[, tree$tip.label]
+      xcom[is.na(xcom)] <- 0 # NA values not allowed in sphy functions
+      
+      # detect whether input data are binary or quantitative
+      binary <- all(xcom %in% 0:1)
+      
+      # construct spatial phylo object
+      ps <- phylospatial(tree, xcom, template)
+      
+      # conservation prioritization
+      ps_prioritize(ps, protected, method = "probable", max_iter = 50, n_reps = 1000, n_cores = 8)
+}
+
+
+# primary analyses using continuous SDM probabilities ===============================
 
 # generate results for mosses and liverworts
 moss <- sphylo("data/moss_chrono.tree", "results/comm/site_by_species.rds")
@@ -91,11 +118,14 @@ combined <- sphylo("data/combined_chrono.tree", "results/comm/site_by_species.rd
 moss %>% writeRaster("results/sphy/moss_sphy.tif", overwrite = T)
 liverwort %>% writeRaster("results/sphy/liverwort_sphy.tif", overwrite = T)
 combined %>% writeRaster("results/sphy/combined_sphy.tif", overwrite = T)
-names(moss) %>% saveRDS("results/sphy/sphy_layer_names.rds")
+names(moss) %>% saveRDS("results/sphy/ps_layer_names.rds")
+
+combined_con <- con("data/combined_chrono.tree", "results/comm/site_by_species.rds")
+combined_con %>% writeRaster("results/sphy/combined_prioritization.tif", overwrite = T)
+names(combined_con) %>% saveRDS("results/sphy/cp_layer_names.rds")
 
 
-
-# analyses using only occurrence records =====================================
+# binary analyses using only occurrence records =====================================
 
 # generate results for mosses and liverworts
 moss <- sphylo("data/moss_chrono.tree", "results/comm/site_by_occurrence.rds")
@@ -103,9 +133,9 @@ liverwort <- sphylo("data/liverworts_chrono.tree", "results/comm/site_by_occurre
 combined <- sphylo("data/combined_chrono.tree", "results/comm/site_by_occurrence.rds")
 
 # save to disk
-moss %>% writeRaster("results/sphy/moss_sphy_occ.tif", overwrite = T)
-liverwort %>% writeRaster("results/sphy/liverwort_sphy_occ.tif", overwrite = T)
-combined %>% writeRaster("results/sphy/combined_sphy_occ.tif", overwrite = T)
+moss %>% writeRaster("results/sphy/moss_ps_occ.tif", overwrite = T)
+liverwort %>% writeRaster("results/sphy/liverwort_ps_occ.tif", overwrite = T)
+combined %>% writeRaster("results/sphy/combined_ps_occ.tif", overwrite = T)
 
 
 
