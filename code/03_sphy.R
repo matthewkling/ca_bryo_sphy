@@ -38,11 +38,14 @@ sphylo <- function(tree_file = "data/moss_chrono.tree",
       xcom <- xcom[, tree$tip.label]
       xcom[is.na(xcom)] <- 0 # NA values not allowed in sphy functions
       
+      species <- colnames(xcom)
+      if(tree_file == "data/combined_chrono.tree") saveRDS(species, "data/species.rds")
+      
       # detect whether input data are binary or quantitative
       binary <- all(xcom %in% 0:1)
       
       # construct spatial phylo object
-      ps <- phylospatial(tree, xcom, template)
+      ps <- phylospatial(xcom, tree, template, data_type = "prob")
       
       # alpha diversity measures
       div <- ps_diversity(ps)
@@ -71,7 +74,7 @@ sphylo <- function(tree_file = "data/moss_chrono.tree",
       }else{
             threshold <- .25
             xcom_binary <- apply(xcom, 2, function(x) as.integer(x > (threshold * max(x, na.rm = T))))
-            ps_binary <- phylospatial(tree, xcom_binary, template)
+            ps_binary <- phylospatial(xcom_binary, tree, template, data_type = "binary")
       }
       cpr <- ps_binary %>% ps_canape(n_reps = n_rand, n_iterations = n_iter)
       names(cpr) <- paste0("canape_", names(cpr))
@@ -137,5 +140,13 @@ moss %>% writeRaster("results/sphy/moss_ps_occ.tif", overwrite = T)
 liverwort %>% writeRaster("results/sphy/liverwort_ps_occ.tif", overwrite = T)
 combined %>% writeRaster("results/sphy/combined_ps_occ.tif", overwrite = T)
 
+
+
+# summary stats for manuscript ============================
+
+species <- readRDS("data/species.rds")
+occ <- read.csv("data/caBryoOccs_2024_07_05-1.csv") %>%
+      mutate(name = str_remove_all(name, "-")) %>%
+      filter(name %in% species)
 
 

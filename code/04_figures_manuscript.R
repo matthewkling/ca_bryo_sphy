@@ -13,8 +13,6 @@ library(ggraph)
 
 
 
-
-
 # methods figure ======================================
 
 # load occurrences and phylogeny
@@ -69,12 +67,13 @@ for(clade in c("moss", "liverwort", "combined")){
       
       # vanilla diversity and endemism measures
       pd <- dx %>%
-            select(x, y,
-                   TR, PD) %>%
+            select(x, y, PD, RPD, RPE) %>%
             gather(stat, value, -x, -y) %>%
             na.omit() %>%
-            mutate(stat = factor(stat, levels = c("TR", "PD")[2:1],
-                                 labels = c("terminal\ndiversity", "phylogenetic\ndiversity")[2:1])) %>%
+            mutate(stat = factor(stat, levels = c("PD", "RPD", "RPE"),
+                                 labels = c("phylogenetic\ndiversity", 
+                                            "relative\nphylogenetic diversity\n",
+                                            "phylogenetic\nendemism"))) %>%
             group_by(stat) %>%
             mutate(value = value / max(value))
       p1 <- pd %>%
@@ -92,13 +91,14 @@ for(clade in c("moss", "liverwort", "combined")){
       
       # randomization results for PD and RPD
       pd <- dx %>%
-            select(x, y, qPD, qRPD) %>%
+            select(x, y, qPD, qRPD, qRPE) %>%
             na.omit() %>%
             gather(stat, value, -x, -y) %>%
             na.omit() %>%
-            mutate(stat = factor(stat, levels = c("qPD", "qRPD"),
+            mutate(stat = factor(stat, levels = c("qPD", "qRPD", "qRPE"),
                                  labels = c("phylogenetic\ndiversity",
-                                            "relative\nphylogenetic diversity")))
+                                            "relative\nphylogenetic diversity",
+                                            "phylogenetic\nendemism")))
       p2 <- pd %>%
             mutate(value = pmax(.001, pmin(.999, value))) %>%
             ggplot(aes(x, y, fill = value)) +
@@ -114,12 +114,12 @@ for(clade in c("moss", "liverwort", "combined")){
             guides(fill = guide_colorbar(barheight = 8)) +
             theme_void() +
             theme(legend.position = "right",
-                  strip.text = element_text(face = "bold", size = 12)) +
+                  strip.text = element_blank()) +
             labs(fill = "quantile in null \ndistribution")
       
       p <- p1 + p2 + plot_layout(nrow = 2)
       ggsave(paste0("figures/manuscript/alpha_", clade, ".png"), 
-             p, width = 7, height = 8, units = "in")
+             p, width = 10, height = 8, units = "in")
 }
 
 
@@ -596,3 +596,42 @@ p <- c(protected, intact) %>%
       labs(fill = NULL)
 ggsave("figures/manuscript/intactness_protection.png", 
        p, width = 10, height = 6, units = "in")
+
+
+# climate ============================
+
+# load and project climate rasters
+clim_files <- list.files("data/bcm", pattern="filled3x", full.names=T) 
+clim_vars <- substr(basename(clim_files), 1, 3)
+clim <- lapply(clim_files, readRDS) %>% do.call("stack", .)
+names(clim) <- clim_vars
+clim <- clim[[sort(names(clim))]]
+r <- rast("results/sphy/combined_sphy.tif")[[1]]
+clim <- rast(clim)
+clim$ppt <- log10(clim$ppt)
+clim <- aggregate(clim, 10, fun = "mean")
+clim <- project(clim, r)
+
+pd <- bind_rows(dc %>% select(x, y, PD) %>% mutate(taxon = "full dataset"),
+          dm %>% select(x, y, PD) %>% mutate(taxon = "mosses"),
+          dl %>% select(x, y, PD) %>% mutate(taxon = "liverworts")) %>%
+      left_join(clim %>% as.data.frame(xy = TRUE) %>% as_tibble()) %>%
+      gather(variable, climate, cwd:ppt) %>%
+      mutate(variable = toupper(variable))
+pds <- pd %>%
+      group_by(variable, taxon) %>%
+      summarize(r = cor(climate, PD, use = "pairwise.complete.obs", method = "spearman") ^ 2,
+                climate = min(climate, na.rm = T),
+                PD = max(PD, na.rm = T))
+p <- pd %>%
+      ggplot(aes(climate, PD)) +
+      facet_grid(taxon ~ variable, scales = "free") +
+      geom_point(size = .15, alpha = .5) +
+      geom_text(data = pds, aes(label = round(r, 2)), color = "red",
+                hjust =0, vjust = 1) +
+      theme_bw() +
+      scale_y_sqrt(breaks = c(0, .025, .1, .2, .4)) +
+      theme(strip.background = element_rect(fill = "black", color = "black"),
+            strip.text = element_text(color = "white"))
+ggsave("figures/manuscript/climate_pd.png", 
+       p, width = 7, height = 5, units = "in")
