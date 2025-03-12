@@ -23,29 +23,25 @@ protected[is.na(protected)] <- 1
 
 # analyses using SDM inputs =====================================
 
-# function to run spatial phylogenetic analyses for a given phylogeny
-sphylo <- function(tree_file = "results/chronograms/moss_chrono.tree", 
-                   comm_file = "results/comm/site_by_species.rds"){
+build_ps <- function(tree_file, comm_file){
       
       comm <- readRDS(comm_file)
-      tree <- read.tree(file = tree_file)#[[2]]
-      
-      # intersect and clean up
+      tree <- read.tree(file = tree_file)
       tree$tip.label <- str_remove_all(tree$tip.label, "-")
       colnames(comm) <- str_remove_all(colnames(comm), "-")
-      xcom <- comm[, colnames(comm) %in% tree$tip.label]
-      tree <- drop.tip(tree, setdiff(tree$tip.label, colnames(comm)))
-      xcom <- xcom[, tree$tip.label]
-      xcom[is.na(xcom)] <- 0 # NA values not allowed in sphy functions
       
       species <- colnames(xcom)
       if(tree_file == "data/combined_chrono.tree") saveRDS(species, "results/sphy/species.rds")
       
-      # detect whether input data are binary or quantitative
-      binary <- all(xcom %in% 0:1)
+      phylospatial(xcom, tree, template, data_type = "prob")
+}
+
+# function to run spatial phylogenetic analyses for a given phylogeny
+sphylo <- function(tree_file = "results/chronograms/moss_chrono.tree", 
+                   comm_file = "results/comm/site_by_species.rds"){
       
-      # construct spatial phylo object
-      ps <- phylospatial(xcom, tree, template, data_type = "prob")
+      ps <- build_ps(tree_file, comm_file)
+      binary <- ps$data_type == "binary"
       
       # alpha diversity measures
       div <- ps_diversity(ps)
@@ -63,7 +59,8 @@ sphylo <- function(tree_file = "results/chronograms/moss_chrono.tree",
       # neo and paleo edemism
       n_rand <- 1000
       n_iter <- 100000
-      rnd <- ps_rand(ps, n_rand = n_rand, n_iter = n_iter, n_strata = ifelse(binary, 2, 5), 
+      rnd <- ps_rand(ps, fun = "quantize", method = "curveball", 
+                     n_rand = n_rand, burnin = n_iter, n_strata = ifelse(binary, 2, 5), 
                      transform = sqrt, n_cores = parallel::detectCores() - 2)
       
       # construct binary version of data set and run canaper randomizations
@@ -73,10 +70,11 @@ sphylo <- function(tree_file = "results/chronograms/moss_chrono.tree",
             ps_binary <- ps
       }else{
             threshold <- .25
-            xcom_binary <- apply(xcom, 2, function(x) as.integer(x > (threshold * max(x, na.rm = T))))
+            xcom_binary <- ps_get_comm(ps, spatial = FALSE) %>%
+                  apply(2, function(x) as.integer(x > (threshold * max(x, na.rm = T))))
             ps_binary <- phylospatial(xcom_binary, tree, template, data_type = "binary")
       }
-      cpr <- ps_binary %>% ps_canape(n_reps = n_rand, n_iterations = n_iter)
+      cpr <- ps_binary %>% ps_canaper(n_reps = n_rand, n_iterations = n_iter)
       names(cpr) <- paste0("canape_", names(cpr))
       
       # combine
@@ -84,28 +82,24 @@ sphylo <- function(tree_file = "results/chronograms/moss_chrono.tree",
             mask(protectedNA)
 }
 
+# run canape analysis only
+canape <- function(tree_file = "results/chronograms/combined_chrono.tree", 
+                   comm_file = "results/comm/site_by_species.rds", 
+                   threshold = 0.25){
+      cpr <- build_ps(tree_file, comm_file) %>%
+            ps_get_comm(spatial = FALSE) %>%
+            apply(2, function(x) as.integer(x > (threshold * max(x, na.rm = T)))) %>%
+            phylospatial(tree, template, data_type = "binary") %>% 
+            ps_canaper(n_reps = n_rand, n_iterations = n_iter)
+      names(cpr) <- paste0("canape_", names(cpr))
+      cpr
+}
+
 # run conservation prioritization only, using probabilistic method
 con <- function(tree_file = "results/chronograms/moss_chrono.tree", 
                 comm_file = "results/comm/site_by_species.rds"){
       
-      comm <- readRDS(comm_file)
-      tree <- read.tree(file = tree_file)#[[2]]
-      
-      # intersect and clean up
-      tree$tip.label <- str_remove_all(tree$tip.label, "-")
-      colnames(comm) <- str_remove_all(colnames(comm), "-")
-      xcom <- comm[, colnames(comm) %in% tree$tip.label]
-      tree <- drop.tip(tree, setdiff(tree$tip.label, colnames(comm)))
-      xcom <- xcom[, tree$tip.label]
-      xcom[is.na(xcom)] <- 0 # NA values not allowed in sphy functions
-      
-      # detect whether input data are binary or quantitative
-      binary <- all(xcom %in% 0:1)
-      
-      # construct spatial phylo object
-      ps <- phylospatial(tree, xcom, template)
-      
-      # conservation prioritization
+      ps <- build_ps(tree_file, comm_file)
       ps_prioritize(ps, protected, method = "probable", max_iter = 50, n_reps = 1000, n_cores = 8)
 }
 
@@ -123,9 +117,15 @@ liverwort %>% writeRaster("results/sphy/liverwort_sphy.tif", overwrite = T)
 combined %>% writeRaster("results/sphy/combined_sphy.tif", overwrite = T)
 names(moss) %>% saveRDS("results/sphy/ps_layer_names.rds")
 
+# probabilistic conservation prioritization
 combined_con <- con("results/chronograms/combined_chrono.tree", "results/comm/site_by_species.rds")
 combined_con %>% writeRaster("results/sphy/combined_prioritization.tif", overwrite = T)
 names(combined_con) %>% saveRDS("results/sphy/cp_layer_names.rds")
+
+# canape sensitivity to sdm threshold
+canape(threshold = 0.10) %>% writeRaster("results/sphy/canape_t10.tif", overwrite = T)
+canape(threshold = 0.25) %>% writeRaster("results/sphy/canape_t25.tif", overwrite = T)
+canape(threshold = 0.50) %>% writeRaster("results/sphy/canape_t50.tif", overwrite = T)
 
 
 # binary analyses using only occurrence records =====================================

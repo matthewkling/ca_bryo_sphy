@@ -17,7 +17,7 @@ library(ggraph)
 
 # load occurrences and phylogeny
 occ <- read.csv("data/caBryoOccs_2024_07_05-1.csv")
-tree <- read.tree(file = "data/combined_chrono.tree")
+tree <- read.tree(file = "results/chronograms/combined_chrono.tree")
 
 # state boundary data for maps
 select <- dplyr::select
@@ -288,10 +288,7 @@ ggsave("figures/manuscript/ordination_rgb.png",
 
 # nape ====================================================
 
-# methods comparison for the combined dataset:
-# - occ vs sdm
-# - curveball vs quantize
-# - canape vs snape
+# methods comparison for the combined dataset
 
 snape <- function(rand,
                   palette = c("gray90", "blue", "red"),
@@ -328,9 +325,6 @@ snape <- function(rand,
 # non-sig, neo, paleo, mixed/super
 pal <- c("gray80", "red", "purple", "dodgerblue")
 cpal <- c("gray80", "cyan", "blue", "purple", "red", "orange")
-
-# pal <- c("gray80", viridis::viridis_pal()(3))
-# cpal <- c("gray80", viridis::viridis_pal()(5))
 
 # endem type
 c1 <- bind_rows(dc %>% 
@@ -531,6 +525,38 @@ ggsave("figures/manuscript/snape_moss_liverwort.png",
        pp, width = 5, height = 6, units = "in")
 
 
+## canape sensitivity to sdm threshold =====
+cp <- list.files("results/sphy", pattern = "canape_t", full.names = T) %>%
+      map(rast) %>%
+      map(function(x) setNames(x[[c("canape_pe_obs_p_upper", "canape_rpe_obs_p_upper", "canape_pe_alt_obs_p_upper")]],
+                               c("qPE", "qRPE", "qCE"))) %>%
+      map(ps_canape) %>%
+      rast() %>%
+      setNames(c("t10", "t25", "t50")) %>%
+      as.data.frame(xy = TRUE) %>%
+      gather(threshold, value, -x, -y) %>%
+      mutate(threshold = as.integer(str_remove(threshold, "t")) / 100,
+             value = as.character(ifelse(value == "super", "mixed", value)),
+             value = factor(value, levels = c("non-significant", "neo", "mixed", "paleo"))) %>%
+      filter(!is.na(value))
+
+p <- ggplot() +
+      facet_wrap(~threshold, labeller = label_both) +
+      geom_raster(data = cp, aes(x, y, fill = value)) +
+      geom_path(data = cali, aes(x, y, group = group), alpha = .5) +
+      scale_fill_manual(values = pal) +
+      labs(fill = "CANAPE\nclassification") +
+      theme_bw() +
+      theme(axis.text = element_blank(),
+            axis.title = element_blank(),
+            axis.ticks = element_blank(),
+            panel.grid = element_blank(),
+            strip.background = element_rect(color = "black", fill = "black"),
+            strip.text = element_text(color = "white")) +
+      coord_fixed()
+ggsave("figures/manuscript/canape_threshold_sensitivity.png", 
+       p, width = 8, height = 3, units = "in")
+
 
 # conservation =============================================
 
@@ -615,8 +641,8 @@ clim <- aggregate(clim, 10, fun = "mean")
 clim <- project(clim, r)
 
 pd <- bind_rows(dc %>% select(x, y, PD) %>% mutate(taxon = "full dataset"),
-          dm %>% select(x, y, PD) %>% mutate(taxon = "mosses"),
-          dl %>% select(x, y, PD) %>% mutate(taxon = "liverworts")) %>%
+                dm %>% select(x, y, PD) %>% mutate(taxon = "mosses"),
+                dl %>% select(x, y, PD) %>% mutate(taxon = "liverworts")) %>%
       left_join(clim %>% as.data.frame(xy = TRUE) %>% as_tibble()) %>%
       gather(variable, climate, cwd:ppt) %>%
       mutate(variable = toupper(variable))

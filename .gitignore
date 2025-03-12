@@ -38,3 +38,7 @@ ca_bryo_sphy.Rproj
 results/sdm/
 data/from phycomn/
 data/old_trees/
+code/branch_skew_simulation.R
+code/sdm_to_tif.R
+results/sdm.tif
+results/sdm.tif.zip
