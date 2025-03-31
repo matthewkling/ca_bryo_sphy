@@ -5,6 +5,7 @@ This repository contains all:
 
 -   [input data](/data) used for the analyses
 -   [code](/code) for inferring the phylogeny and assessing spatial phylogenetic patterns
+-   [modeled distributions](https://github.com/matthewkling/ca_bryo_sphy/releases/tag/v0.1) for 746 species of moss and liverwort across California
 -   [results](/results) generated for the study, including intermediate data and final results
 -   [figures](/figures) produced for the manuscript
 
