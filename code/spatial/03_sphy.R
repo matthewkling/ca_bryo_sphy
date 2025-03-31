@@ -30,10 +30,10 @@ build_ps <- function(tree_file, comm_file){
       tree$tip.label <- str_remove_all(tree$tip.label, "-")
       colnames(comm) <- str_remove_all(colnames(comm), "-")
       
-      species <- colnames(xcom)
+      species <- intersect(colnames(comm), tree$tip.label)
       if(tree_file == "data/combined_chrono.tree") saveRDS(species, "results/sphy/species.rds")
       
-      phylospatial(xcom, tree, template, data_type = "prob")
+      phylospatial(comm, tree, template, data_type = "prob")
 }
 
 # function to run spatial phylogenetic analyses for a given phylogeny
@@ -85,11 +85,11 @@ sphylo <- function(tree_file = "results/chronograms/moss_chrono.tree",
 # run canape analysis only
 canape <- function(tree_file = "results/chronograms/combined_chrono.tree", 
                    comm_file = "results/comm/site_by_species.rds", 
-                   threshold = 0.25){
+                   threshold = 0.25, n_rand = 1000, n_iter = 100000){
       cpr <- build_ps(tree_file, comm_file) %>%
             ps_get_comm(spatial = FALSE) %>%
             apply(2, function(x) as.integer(x > (threshold * max(x, na.rm = T)))) %>%
-            phylospatial(tree, template, data_type = "binary") %>% 
+            phylospatial(read.tree(file = tree_file), template, data_type = "binary") %>% 
             ps_canaper(n_reps = n_rand, n_iterations = n_iter)
       names(cpr) <- paste0("canape_", names(cpr))
       cpr

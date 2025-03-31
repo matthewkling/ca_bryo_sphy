@@ -25,10 +25,8 @@ template <- stack("data/cpad_cced_raster_15km.tif")[[2]]
 
 # function to calculate 15km probability from 810m probabilities
 aggProb <- function(x, ...){
-      # probability of a single presence -- too liberal
-      # 1 - prod(1 - x, ...)
-      # average probability -- reflects proportion of range in target cell
-      mean(x, ...)
+      # 1 - prod(1 - x, ...) # probability of a single presence -- too liberal
+      mean(x, ...) # average probability -- reflects proportion of range in target cell
 }
 
 
